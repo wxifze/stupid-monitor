@@ -7,6 +7,8 @@
 #include <math.h>
 #include <errno.h>
 #include <limits.h>
+#include <string.h>
+#include <inttypes.h>
 
 /*
 struct Frame {
@@ -29,7 +31,7 @@ bool alloc_area(struct Area* area, size_t width, size_t height){
 		return false;
 
 	for (size_t y = 0; y < height; y++)
-		if (!(area->buff[y] = malloc(width*sizeof(bool))))
+		if (!(area->buff[y] = malloc(width * sizeof(bool))))
 		{
 			while (--y >= 0)
 				free(area->buff[y]);
@@ -147,68 +149,7 @@ struct Value get_rand() {
 	};
 }
 
-bool digits[10][4][3] = {
-	{ // 0
-		{ 1,1,1 },
-		{ 1,0,1 },
-		{ 1,0,1 },
-		{ 1,1,1 },
-	},
-	{ // 1
-		{ 0,1,0 },
-		{ 1,1,0 },
-		{ 0,1,0 },
-		{ 1,1,1 },
-	},
-	{ // 2
-		{ 1,1,1 },
-		{ 0,0,1 },
-		{ 1,1,0 },
-		{ 1,1,1 },
-	},
-	{ // 3
-		{ 1,1,1 },
-		{ 0,1,1 },
-		{ 0,0,1 },
-		{ 1,1,1 },
-	},
-	{ // 4
-		{ 1,0,1 },
-		{ 1,0,1 },
-		{ 1,1,1 },
-		{ 0,0,1 },
-	},
-	{ // 5
-		{ 1,1,1 },
-		{ 1,0,0 },
-		{ 0,1,1 },
-		{ 1,1,1 },
-	},
-	{ // 6
-		{ 1,1,1 },
-		{ 1,0,0 },
-		{ 1,1,1 },
-		{ 1,1,1 },
-	},
-	{ // 7
-		{ 1,1,1 },
-		{ 0,0,1 },
-		{ 0,1,0 },
-		{ 0,1,0 },
-	},
-	{ // 8
-		{ 0,1,1 },
-		{ 0,1,1 },
-		{ 1,0,1 },
-		{ 1,1,1 },
-	},
-	{ // 9
-		{ 1,1,1 },
-		{ 1,1,1 },
-		{ 0,0,1 },
-		{ 1,1,1 },
-	},
-};
+bool*** digits;
 
 void render_digit(struct Area* area, int digit) {
 	assert(area->width == 3);
@@ -221,7 +162,6 @@ void render_digit(struct Area* area, int digit) {
 
 // area must be 4 by 4*n-1
 void render_scalar(struct Area* area, unsigned int value) {
-	printf("rendering scalar %u\n", value);
 	assert((area->width + 1) % 4 == 0);
 	assert(area->height == 4);
 
@@ -274,7 +214,6 @@ char get_ring(const struct Ring* ring, size_t index) {
 }
 
 void push_ring(struct Ring* ring, char value) {
-	//set_ring(ring, ring->length, value);
 	ring->buff[(ring->begin + ring->length) % ring->capacity] = value;
 	if (ring->length < ring->capacity)
 		ring->length++;
@@ -302,7 +241,111 @@ void render_plot(
 	}
 }
 
+bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
+	// i'm to lazy to parse comments
+
+	if (strncmp(header, "P1 ", 3))
+		return false;
+
+	size_t* vars[] = { width, height };
+	const char* end = header + 3;
+	for (size_t i = 0; i < sizeof(vars) / sizeof(*vars); i++) {
+		header = end;
+		errno = 0;
+
+		// i don't know why i try to be so portable...
+		uintmax_t var = strtoumax(header, (char**)&end, 10);
+		if (errno || var == 0 || var > SIZE_MAX)
+			return false;
+
+		*vars[i] = var;
+	}
+
+	while (*end == ' ') 
+		end++;
+
+	return *end == '\n';
+}
+
+bool** load_pbm(const char* path, size_t exp_width, size_t exp_height) {
+	FILE* file = fopen(path, "r");
+	if (!file)
+		err(1, "failed to open `%s`", path);
+
+	char* header = NULL;
+	size_t header_size;
+	ssize_t header_len = getline(&header, &header_size, file);
+
+	if (header_len == -1)
+		err(1, "failed to read PBM header in `%s`", path);
+
+	size_t width, height;
+	if (!parse_pbm_header(header, &width, &height))
+		errx(1, "invalid PBM header in `%s`", path);
+
+	if (width != exp_width)
+		errx(1, "expected `%s` width to be %zu, got %zu", path, exp_width, width);
+	if (height != exp_height)
+		errx(1, "expected `%s` height to be %zu, got %zu", path, exp_height, height);
+
+	free(header);
+
+
+	bool** buff = malloc(height * sizeof(bool*));
+	if (!buff)
+		errx(1, "failed to allocate buffer for `%s`", path);
+	for (size_t i = 0; i < height; i++)
+		if (!(buff[i] = malloc(width * sizeof(bool))))
+			errx(1, "failed to allocate buffer for `%s`", path);
+
+	for (size_t y = 0; y < height; y++)
+		for (size_t x = 0; x < width; x++)
+			for (;;) {
+				int c = getc(file);
+				if (c == '0') {
+					buff[y][x] = false;
+					break;
+				} else if (c == '1') {
+					buff[y][x] = true;
+					break;
+				} else if (c != ' ' && c != '\n') {
+					errx(1, "garbage in pixel data in `%s`", path);
+				} else if (c == EOF)
+					errx(1, "not enough pixel data in `%s`", path);
+			}
+
+	return buff;
+}
+
+void init_digits() {
+	const char* paths[] = {
+		"bitmaps/0.pbm",
+		"bitmaps/1.pbm",
+		"bitmaps/2.pbm",
+		"bitmaps/3.pbm",
+		"bitmaps/4.pbm",
+		"bitmaps/5.pbm",
+		"bitmaps/6.pbm",
+		"bitmaps/7.pbm",
+		"bitmaps/8.pbm",
+		"bitmaps/9.pbm",
+	};
+	const size_t paths_len = sizeof(paths) / sizeof(*paths);
+
+	if (!(digits = malloc(paths_len)))
+		errx(1, "failed to allocate for digits");
+
+	for (size_t i = 0; i < paths_len; i++)
+		digits[i] = load_pbm(paths[i], 3, 4);
+}
+
+void init_bitmaps() {
+	init_digits();
+}
+
 int main() {
+	init_bitmaps();
+
 	struct Area area;
 	if (!alloc_area(&area, 20, 16))
 		errx(1, "failed to allocate area");
@@ -311,7 +354,8 @@ int main() {
 	get_subarea(&area, &sv_area, 1, 1, 15, 4);
 
 	struct Ring ring;
-	alloc_ring(&ring, 20);
+	if (!(alloc_ring(&ring, 20)))
+		errx(1, "failed to allocate ring");
 
 	struct Area pl_area;
 	get_subarea(&area, &pl_area, 0, 6, 20, 10);
@@ -320,7 +364,7 @@ int main() {
 	double x = 0;
 	for (;;) {
 		sleep_until(next_update);
-		next_update += 1.0 / 60;
+		next_update += 1.0 / 30;
 
 		struct Value rv = get_rand();
 
