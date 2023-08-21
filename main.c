@@ -61,7 +61,7 @@ void draw_area(const struct Area* area) {
 	for (size_t y = 0; y < area->height; y++) {
 		for (size_t x = 0; x < area->width; x++)
 			if (area->buff[y][x])
-				printf("##");
+				printf("[]");
 			else
 				printf("  ");
 		printf("\n");
@@ -240,24 +240,95 @@ void render_scalar(struct Area* area, unsigned int value) {
 		fill_area(area);
 }
 
+struct Ring {
+	char* buff;
+	size_t capacity;
+	size_t begin;
+	size_t length;
+};
+
+bool alloc_ring(struct Ring* ring, size_t capacity) {
+	if (!(ring->buff = malloc(capacity * sizeof(char))))
+		return false;
+	ring->capacity = capacity;
+	ring->begin = 0;
+	ring->length = 0;
+	return true;
+}
+
+void free_ring(struct Ring* ring) {
+	free(ring->buff);
+	ring->capacity = 0;
+	ring->begin = 0;
+	ring->length = 0;
+}
+
+/*
+void set_ring(struct Ring* ring, size_t index, double value) {
+	ring->buff[(ring->begin + index) % ring->capacity] = value;
+}
+*/
+
+char get_ring(const struct Ring* ring, size_t index) {
+	return ring->buff[(ring->begin + index) % ring->length];
+}
+
+void push_ring(struct Ring* ring, char value) {
+	//set_ring(ring, ring->length, value);
+	ring->buff[(ring->begin + ring->length) % ring->capacity] = value;
+	if (ring->length < ring->capacity)
+		ring->length++;
+	else
+		ring->begin = (ring->begin + 1) % ring->capacity;
+}
+
+void render_plot(
+		struct Area* area, 
+		const struct Ring* ring
+) {
+	assert(ring->capacity <= area->width);
+	assert(area->height == 10);
+
+	clear_area(area);
+	for (size_t i = 0; i < ring->length; i++) {
+		char value =  get_ring(ring, ring->length - 1 - i);
+		assert(0 <= value && value < 10);
+		set_area(
+			area, 
+			area->width - 1 - i, 
+			area->height - 1 - value,
+			true
+		);
+	}
+}
+
 int main() {
 	struct Area area;
-	if (!alloc_area(&area, 20, 5))
+	if (!alloc_area(&area, 20, 16))
 		errx(1, "failed to allocate area");
 
 	struct Area sv_area;
 	get_subarea(&area, &sv_area, 1, 1, 15, 4);
+
+	struct Ring ring;
+	alloc_ring(&ring, 20);
+
+	struct Area pl_area;
+	get_subarea(&area, &pl_area, 0, 6, 20, 10);
 	
 	double next_update = gettime();
+	double x = 0;
 	for (;;) {
 		sleep_until(next_update);
-		next_update += 0.5;
+		next_update += 1.0 / 60;
 
 		struct Value rv = get_rand();
 
-		//set_area(&area, (int)rv.value % 20, (int)rv.timestamp % 5, true);
+		push_ring(&ring, sin(x += 0.4) * 5 + 5);
 
 		render_scalar(&sv_area, (int)rv.value);
+		render_plot(&pl_area, &ring);
+
 
 		draw_area(&area);
 		
@@ -275,5 +346,6 @@ int main() {
 	draw_area(&area);
 	*/
 
+	free_ring(&ring);
 	free_area(&area);
 }
