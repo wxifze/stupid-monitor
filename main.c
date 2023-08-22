@@ -149,7 +149,7 @@ struct Value get_rand() {
 	};
 }
 
-bool*** digits;
+const bool*** digits;
 
 void render_digit(struct Area* area, int digit) {
 	assert(area->width == 3);
@@ -241,6 +241,10 @@ void render_plot(
 	}
 }
 
+const bool** uptime_icon;
+const bool** fan_icon;
+const bool** uptime_text;
+
 bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
 	// i'm to lazy to parse comments
 
@@ -267,7 +271,7 @@ bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
 	return *end == '\n';
 }
 
-bool** load_pbm(const char* path, size_t exp_width, size_t exp_height) {
+const bool** load_pbm(const char* path, size_t exp_width, size_t exp_height) {
 	FILE* file = fopen(path, "r");
 	if (!file)
 		err(1, "failed to open `%s`", path);
@@ -314,7 +318,7 @@ bool** load_pbm(const char* path, size_t exp_width, size_t exp_height) {
 					errx(1, "not enough pixel data in `%s`", path);
 			}
 
-	return buff;
+	return (const bool**)buff;
 }
 
 void init_digits() {
@@ -341,6 +345,9 @@ void init_digits() {
 
 void init_bitmaps() {
 	init_digits();
+	uptime_icon = load_pbm("bitmaps/uptime_icon.pbm", 13, 11);
+	uptime_text = load_pbm("bitmaps/uptime_text.pbm", 5, 14);
+	fan_icon = load_pbm("bitmaps/fan_icon.pbm", 11, 11);
 }
 
 int main() {
