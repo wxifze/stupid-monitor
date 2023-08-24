@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
+#include <ctype.h>
 #include <inttypes.h>
 
 /*
@@ -113,51 +114,144 @@ struct Value {
 
 
 // TODO use CLOCK_MONOLITHIC?
-double gettime() {
+double get_time() {
 	struct timespec now;
-	assert(!clock_gettime(CLOCK_REALTIME, &now));
+	if (clock_gettime(CLOCK_REALTIME, &now))
+		err(1, "clock_gettime failed");
 	return now.tv_sec + now.tv_nsec / 1e9;
 }
 
 // TODO use clock_nanosleep?
 void sleep_until(double target) {
-	target -= gettime();
+	target -= get_time();
 	if (target <= 0)
 		return;
 
-	struct timespec untill = {
+	struct timespec until = {
 		.tv_sec = target,
 		.tv_nsec = fmod(target, 1) * 1e9,
 	};
 	struct timespec left;
 
 	for (;;) {
-		int code = nanosleep(&untill, &left);
+		int code = nanosleep(&until, &left);
 		if (code == 0)
 			break;
-		if (code == EINTR)
-			untill = left;
+		if (code == -1 && errno == EINTR)
+			until = left;
 		else
-			abort();
+			err(1, "nanosleep failed");
 	}
 }
 
 struct Value get_rand() {
 	return (struct Value) { 
-		.timestamp = gettime(),
+		.timestamp = get_time(),
 		.value = rand() % 10000
 	};
 }
 
-const bool*** digits;
+struct Bitmap {
+	const bool** buff;
+	size_t width;
+	size_t height;
+};
 
-void render_digit(struct Area* area, int digit) {
-	assert(area->width == 3);
-	assert(area->height == 4);
-	assert(digit / 10 == 0);
+struct Bitmap* digits;
+struct Bitmap uptime_icon;
+struct Bitmap uptime_text;
+struct Bitmap fan_icon;
+struct Bitmap rtt_icon;
+
+bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
+	// i'm to lazy to parse comments
+
+	if (strncmp(header, "P1", 2))
+		return false;
+
+	if (!isspace(header + 2))
+		return false;
+
+	size_t* vars[] = { width, height };
+	const char* end = header + 3;
+	for (size_t i = 0; i < sizeof(vars) / sizeof(*vars); i++) {
+		header = end;
+		errno = 0;
+
+		// i don't know why i try to be so portable...
+		uintmax_t var = strtoumax(header, (char**)&end, 10);
+		if (errno || var == 0 || var > SIZE_MAX)
+			return false;
+
+		*vars[i] = var;
+	}
+
+	while (*end == ' ') 
+		end++;
+
+	return *end == '\n';
+}
+
+struct Bitmap load_pbm(const char* path, size_t exp_width, size_t exp_height) {
+	FILE* file = fopen(path, "r");
+	if (!file)
+		err(1, "failed to open `%s`", path);
+
+	char* header = NULL;
+	size_t header_size;
+	ssize_t header_len = getline(&header, &header_size, file);
+
+	if (header_len == -1)
+		err(1, "failed to read PBM header in `%s`", path);
+
+	size_t width, height;
+	if (!parse_pbm_header(header, &width, &height))
+		errx(1, "invalid PBM header in `%s`", path);
+
+	if (width != exp_width)
+		errx(1, "expected `%s` width to be %zu, got %zu", path, exp_width, width);
+	if (height != exp_height)
+		errx(1, "expected `%s` height to be %zu, got %zu", path, exp_height, height);
+
+	free(header);
+
+
+	bool** buff = malloc(height * sizeof(bool*));
+	if (!buff)
+		errx(1, "failed to allocate buffer for `%s`", path);
+	for (size_t i = 0; i < height; i++)
+		if (!(buff[i] = malloc(width * sizeof(bool))))
+			errx(1, "failed to allocate buffer for `%s`", path);
+
+	for (size_t y = 0; y < height; y++)
+		for (size_t x = 0; x < width; x++)
+			for (;;) {
+				int c = getc(file);
+				if (c == '0') {
+					buff[y][x] = false;
+					break;
+				} else if (c == '1') {
+					buff[y][x] = true;
+					break;
+				} else if (!isspace(c)) {
+					errx(1, "garbage in pixel data in `%s`", path);
+				} else if (c == EOF)
+					errx(1, "not enough pixel data in `%s`", path);
+			}
+
+	return (struct Bitmap) {
+		.buff = (const bool**)buff,
+		.width = width,
+		.height = height,
+	};
+}
+
+void render_bitmap(struct Area* area, struct Bitmap* bitmap) {
+	assert(area->width == bitmap->width);
+	assert(area->height == bitmap->height);
 	for (size_t y = 0; y < area->height; y++)
 		for (size_t x = 0; x < area->width; x++)
-			set_area(area, x, y, digits[digit][y][x]);
+			set_area(area, x, y, bitmap->buff[y][x]);
 }
 
 // area must be 4 by 4*n-1
@@ -172,7 +266,7 @@ void render_scalar(struct Area* area, unsigned int value) {
 		struct Area digit_area;
 		get_subarea(area, &digit_area, n * 4, 0, 3, 4);
 		if (value)
-			render_digit(&digit_area, value % 10);
+			render_bitmap(&digit_area, digits + (value % 10));
 		value /= 10;
 	}
 
@@ -241,85 +335,6 @@ void render_plot(
 	}
 }
 
-const bool** uptime_icon;
-const bool** fan_icon;
-const bool** uptime_text;
-
-bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
-	// i'm to lazy to parse comments
-
-	if (strncmp(header, "P1 ", 3))
-		return false;
-
-	size_t* vars[] = { width, height };
-	const char* end = header + 3;
-	for (size_t i = 0; i < sizeof(vars) / sizeof(*vars); i++) {
-		header = end;
-		errno = 0;
-
-		// i don't know why i try to be so portable...
-		uintmax_t var = strtoumax(header, (char**)&end, 10);
-		if (errno || var == 0 || var > SIZE_MAX)
-			return false;
-
-		*vars[i] = var;
-	}
-
-	while (*end == ' ') 
-		end++;
-
-	return *end == '\n';
-}
-
-const bool** load_pbm(const char* path, size_t exp_width, size_t exp_height) {
-	FILE* file = fopen(path, "r");
-	if (!file)
-		err(1, "failed to open `%s`", path);
-
-	char* header = NULL;
-	size_t header_size;
-	ssize_t header_len = getline(&header, &header_size, file);
-
-	if (header_len == -1)
-		err(1, "failed to read PBM header in `%s`", path);
-
-	size_t width, height;
-	if (!parse_pbm_header(header, &width, &height))
-		errx(1, "invalid PBM header in `%s`", path);
-
-	if (width != exp_width)
-		errx(1, "expected `%s` width to be %zu, got %zu", path, exp_width, width);
-	if (height != exp_height)
-		errx(1, "expected `%s` height to be %zu, got %zu", path, exp_height, height);
-
-	free(header);
-
-
-	bool** buff = malloc(height * sizeof(bool*));
-	if (!buff)
-		errx(1, "failed to allocate buffer for `%s`", path);
-	for (size_t i = 0; i < height; i++)
-		if (!(buff[i] = malloc(width * sizeof(bool))))
-			errx(1, "failed to allocate buffer for `%s`", path);
-
-	for (size_t y = 0; y < height; y++)
-		for (size_t x = 0; x < width; x++)
-			for (;;) {
-				int c = getc(file);
-				if (c == '0') {
-					buff[y][x] = false;
-					break;
-				} else if (c == '1') {
-					buff[y][x] = true;
-					break;
-				} else if (c != ' ' && c != '\n') {
-					errx(1, "garbage in pixel data in `%s`", path);
-				} else if (c == EOF)
-					errx(1, "not enough pixel data in `%s`", path);
-			}
-
-	return (const bool**)buff;
-}
 
 void init_digits() {
 	const char* paths[] = {
@@ -348,37 +363,187 @@ void init_bitmaps() {
 	uptime_icon = load_pbm("bitmaps/uptime_icon.pbm", 13, 11);
 	uptime_text = load_pbm("bitmaps/uptime_text.pbm", 5, 14);
 	fan_icon = load_pbm("bitmaps/fan_icon.pbm", 11, 11);
+	rtt_icon = load_pbm("bitmaps/rtt_icon.pbm", 9, 32);
 }
 
+void open_or_die(const char* path, FILE** file) {
+	if (!*file) {
+		 *file = fopen(path, "r");
+		if (!*file)
+			err(1, "failed to open `%s`", path);
+	}
+	else {
+		fflush(*file);
+		rewind(*file);
+	}
+}
+
+// first read returns garbage (average cpu load since boot)
+double get_cpu() {
+	const char* path = "/proc/stat";
+	static FILE* stat;
+	open_or_die(path, &stat);
+
+	// linux/fs/proc/stat.c uses u64, so long long must be enough
+	unsigned long long user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice;
+	if (fscanf(
+		stat, "cpu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu", 
+		&user, &nice, &system, &idle, &iowait,
+		&irq, &softirq, &steal, &guest, &guest_nice
+	) != 10)
+		err(1, "failed to parse `%s`", path);
+
+	static unsigned long long old_busy, old_total;
+	unsigned long long  busy, total, delta_busy, delta_total;
+
+	busy = user + nice + system + irq + softirq + steal + guest + guest_nice;
+	total = busy + idle + iowait;
+
+	delta_busy = busy - old_busy;
+	delta_total = total - old_total;
+
+	old_busy = busy;
+	old_total = total;
+
+	return (double) delta_busy / delta_total;
+}
+
+double get_ram() {
+	const char* path = "/proc/meminfo";
+	static FILE* meminfo;
+	open_or_die(path, &meminfo);
+
+	// linux/fs/proc/meminfo.c uses long, but just to be sure
+	unsigned long long total, available;
+
+	if (fscanf(
+		meminfo, 
+		"MemTotal: %llu kB MemFree: %*llu kB MemAvailable: %llu kB", 
+		&total, &available
+	) != 2)
+		err(1, "failed to parse `%s`", path);
+
+	return (double) (total - available) / total;
+}
+
+double get_tccd1() {
+	const char* path = "/sys/class/hwmon/hwmon0/temp3_input";
+	static FILE* temp3_input;
+	open_or_die(path, &temp3_input);
+
+	unsigned long temp;
+	if (fscanf(temp3_input, "%lu", &temp) != 1)
+		err(1, "failed to parse `%s`", path);
+
+	return temp / 1000.0;
+}
+
+unsigned int get_fan1() {
+	const char* path = "/sys/class/hwmon/hwmon2/fan1_input";
+	static FILE* fan1_input;
+	open_or_die(path, &fan1_input);
+
+	unsigned int speed;
+	if (fscanf(fan1_input, "%u", &speed) != 1)
+		err(1, "failed to parse `%s`", path);
+
+	return speed;
+}
+
+unsigned int get_fan2() {
+	const char* path = "/sys/class/hwmon/hwmon2/fan2_input";
+	static FILE* fan2_input;
+	open_or_die(path, &fan2_input);
+
+	unsigned int speed;
+	if (fscanf(fan2_input, "%u", &speed) != 1)
+		err(1, "failed to parse `%s`", path);
+
+	return speed;
+}
+
+unsigned int get_fan3() {
+	const char* path = "/sys/class/hwmon/hwmon2/fan3_input";
+	static FILE* fan3_input;
+	open_or_die(path, &fan3_input);
+
+	unsigned int speed;
+	if (fscanf(fan3_input, "%u", &speed) != 1)
+		err(1, "failed to parse `%s`", path);
+
+	return speed;
+}
+
+/*
+unsigned long long get_enp4s0_up() {
+	static FILE* rx_bytes;
+	if (!rx_bytes) {
+		 rx_bytes = fopen("/sys/class/net/enp4s0/statistics/rx_bytes}", "r");
+		if (!rx_bytes)
+			err(1, "failed to open `/sys/class/net/enp4s0/statistics/rx_bytes`");
+	}
+	else {
+		fflush(rx_bytes);
+		rewind(rx_bytes);
+	}
+
+	unsigned long long bytes;
+	if (fscanf(rx_bytes, "%llu", &bytes))
+		err(1, "failed to parse `/sys/class/net/enp4s0/statistics/rx_bytes`");
+
+
+}
+*/
+
 int main() {
+	for (;;) {
+		printf("cpu: %f, temp: %f, ram: %f, fan1: %u, fan2: %u, fan3: %u\n", get_cpu(), get_tccd1(), get_ram(), get_fan1(), get_fan2(), get_fan3());
+		sleep_until(get_time() + 1);
+	}
+	return 1;
 	init_bitmaps();
 
 	struct Area area;
-	if (!alloc_area(&area, 20, 16))
+	if (!alloc_area(&area, 128, 32))
 		errx(1, "failed to allocate area");
 
-	struct Area sv_area;
-	get_subarea(&area, &sv_area, 1, 1, 15, 4);
+	struct Area uptime_icon_area;
+	get_subarea(&area, &uptime_icon_area, 4, 2, 13, 11);
+	render_bitmap(&uptime_icon_area, &uptime_icon);
 
+	struct Area uptime_icon_text;
+	get_subarea(&area, &uptime_icon_text, 15, 16, 5, 14);
+	render_bitmap(&uptime_icon_text, &uptime_text);
+
+	struct Area fan_icon_area;
+	get_subarea(&area, &fan_icon_area, 113, 2, 11, 11);
+	render_bitmap(&fan_icon_area, &fan_icon);
+
+	struct Area rtt_icon_area;
+	get_subarea(&area, &rtt_icon_area, 24, 0, 9, 32);
+	render_bitmap(&rtt_icon_area, &rtt_icon);
+
+	/*
 	struct Ring ring;
 	if (!(alloc_ring(&ring, 20)))
 		errx(1, "failed to allocate ring");
+		*/
 
 	struct Area pl_area;
 	get_subarea(&area, &pl_area, 0, 6, 20, 10);
 	
-	double next_update = gettime();
+	double next_update = get_time();
 	double x = 0;
 	for (;;) {
 		sleep_until(next_update);
-		next_update += 1.0 / 30;
+		next_update += 1.0 / 10;
 
 		struct Value rv = get_rand();
 
-		push_ring(&ring, sin(x += 0.4) * 5 + 5);
+		//push_ring(&ring, sin(x += 0.4) * 5 + 5);
 
-		render_scalar(&sv_area, (int)rv.value);
-		render_plot(&pl_area, &ring);
+		//render_scalar(&sv_area, (int)rv.value);
+		//render_plot(&pl_area, &ring);
 
 
 		draw_area(&area);
@@ -397,6 +562,6 @@ int main() {
 	draw_area(&area);
 	*/
 
-	free_ring(&ring);
+	//free_ring(&ring);
 	free_area(&area);
 }
