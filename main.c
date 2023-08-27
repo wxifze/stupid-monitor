@@ -27,32 +27,16 @@ struct Area {
 	size_t y_offset;
 };
 
-bool alloc_area(struct Area* area, size_t width, size_t height){
+void alloc_area(struct Area* area, size_t width, size_t height){
 	if (!(area->buff = malloc(height * sizeof(bool*))))
-		return false;
+		errx(1, "failed to allocate area");
 
 	for (size_t y = 0; y < height; y++)
 		if (!(area->buff[y] = malloc(width * sizeof(bool))))
-		{
-			while (--y >= 0)
-				free(area->buff[y]);
-			return false;
-		}
+			errx(1, "failed to allocate area");
 
 	area->width = width;
 	area->height = height;
-	area->x_offset = 0;
-	area->y_offset = 0;
-	return true;
-}
-
-void free_area(struct Area* area) {
-	for (size_t y = 0; y < area->height; y++)
-		free(area->buff[y]);
-	free(area->buff);
-	area->buff = NULL;
-	area->width = 0;
-	area->height = 0;
 	area->x_offset = 0;
 	area->y_offset = 0;
 }
@@ -163,13 +147,18 @@ struct Bitmap uptime_text;
 struct Bitmap fan_icon;
 struct Bitmap rtt_icon;
 
+int isspace_nonl(int c) {
+	return isspace(c) && c != '\n';
+}
+
+// TODO refactor this mess
 bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
 	// i'm to lazy to parse comments
 
 	if (strncmp(header, "P1", 2))
 		return false;
 
-	if (!isspace(header + 2))
+	if (!isspace_nonl(*(header + 2)))
 		return false;
 
 	size_t* vars[] = { width, height };
@@ -186,7 +175,7 @@ bool parse_pbm_header(const char* header, size_t* width, size_t* height) {
 		*vars[i] = var;
 	}
 
-	while (*end == ' ') 
+	while (isspace_nonl(*end))
 		end++;
 
 	return *end == '\n';
@@ -228,10 +217,10 @@ struct Bitmap load_pbm(const char* path, size_t exp_width, size_t exp_height) {
 			for (;;) {
 				int c = getc(file);
 				if (c == '0') {
-					buff[y][x] = false;
+					buff[y][x] = true;
 					break;
 				} else if (c == '1') {
-					buff[y][x] = true;
+					buff[y][x] = false;
 					break;
 				} else if (!isspace(c)) {
 					errx(1, "garbage in pixel data in `%s`", path);
@@ -275,24 +264,16 @@ void render_scalar(struct Area* area, unsigned int value) {
 }
 
 struct Ring {
-	char* buff;
+	double* buff;
 	size_t capacity;
 	size_t begin;
 	size_t length;
 };
 
-bool alloc_ring(struct Ring* ring, size_t capacity) {
-	if (!(ring->buff = malloc(capacity * sizeof(char))))
-		return false;
+void alloc_ring(struct Ring* ring, size_t capacity) {
+	if (!(ring->buff = malloc(capacity * sizeof(double))))
+		errx(1, "failed to allocate ring");
 	ring->capacity = capacity;
-	ring->begin = 0;
-	ring->length = 0;
-	return true;
-}
-
-void free_ring(struct Ring* ring) {
-	free(ring->buff);
-	ring->capacity = 0;
 	ring->begin = 0;
 	ring->length = 0;
 }
@@ -303,11 +284,11 @@ void set_ring(struct Ring* ring, size_t index, double value) {
 }
 */
 
-char get_ring(const struct Ring* ring, size_t index) {
+double get_ring(const struct Ring* ring, size_t index) {
 	return ring->buff[(ring->begin + index) % ring->length];
 }
 
-void push_ring(struct Ring* ring, char value) {
+void push_ring(struct Ring* ring, double value) {
 	ring->buff[(ring->begin + ring->length) % ring->capacity] = value;
 	if (ring->length < ring->capacity)
 		ring->length++;
@@ -320,12 +301,14 @@ void render_plot(
 		const struct Ring* ring
 ) {
 	assert(ring->capacity <= area->width);
-	assert(area->height == 10);
 
 	clear_area(area);
 	for (size_t i = 0; i < ring->length; i++) {
 		char value =  get_ring(ring, ring->length - 1 - i);
-		assert(0 <= value && value < 10);
+		assert(0 <= value && value <= area->height);
+		if (value == area->height)
+			value--;
+		
 		set_area(
 			area, 
 			area->width - 1 - i, 
@@ -391,7 +374,7 @@ double get_cpu() {
 		&user, &nice, &system, &idle, &iowait,
 		&irq, &softirq, &steal, &guest, &guest_nice
 	) != 10)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
 	static unsigned long long old_busy, old_total;
 	unsigned long long  busy, total, delta_busy, delta_total;
@@ -405,6 +388,7 @@ double get_cpu() {
 	old_busy = busy;
 	old_total = total;
 
+	printf("%f\n", (double) delta_busy / delta_total);
 	return (double) delta_busy / delta_total;
 }
 
@@ -421,8 +405,9 @@ double get_ram() {
 		"MemTotal: %llu kB MemFree: %*llu kB MemAvailable: %llu kB", 
 		&total, &available
 	) != 2)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
+	printf("%f\n", (double) (total - available) / total);
 	return (double) (total - available) / total;
 }
 
@@ -433,135 +418,164 @@ double get_tccd1() {
 
 	unsigned long temp;
 	if (fscanf(temp3_input, "%lu", &temp) != 1)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
+	printf("%f\n", (double) temp / 1000.0);
 	return temp / 1000.0;
 }
 
-unsigned int get_fan1() {
+double get_fan1() {
 	const char* path = "/sys/class/hwmon/hwmon2/fan1_input";
 	static FILE* fan1_input;
 	open_or_die(path, &fan1_input);
 
 	unsigned int speed;
 	if (fscanf(fan1_input, "%u", &speed) != 1)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
 	return speed;
 }
 
-unsigned int get_fan2() {
+double get_fan2() {
 	const char* path = "/sys/class/hwmon/hwmon2/fan2_input";
 	static FILE* fan2_input;
 	open_or_die(path, &fan2_input);
 
 	unsigned int speed;
 	if (fscanf(fan2_input, "%u", &speed) != 1)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
 	return speed;
 }
 
-unsigned int get_fan3() {
+double get_fan3() {
 	const char* path = "/sys/class/hwmon/hwmon2/fan3_input";
 	static FILE* fan3_input;
 	open_or_die(path, &fan3_input);
 
 	unsigned int speed;
 	if (fscanf(fan3_input, "%u", &speed) != 1)
-		err(1, "failed to parse `%s`", path);
+		errx(1, "failed to parse `%s`", path);
 
 	return speed;
 }
 
-/*
-unsigned long long get_enp4s0_up() {
+double get_enp4s0_rx() {
+	const char* path = "/sys/class/net/enp4s0/statistics/rx_bytes";
 	static FILE* rx_bytes;
-	if (!rx_bytes) {
-		 rx_bytes = fopen("/sys/class/net/enp4s0/statistics/rx_bytes}", "r");
-		if (!rx_bytes)
-			err(1, "failed to open `/sys/class/net/enp4s0/statistics/rx_bytes`");
-	}
-	else {
-		fflush(rx_bytes);
-		rewind(rx_bytes);
-	}
+	open_or_die(path, &rx_bytes);
 
 	unsigned long long bytes;
-	if (fscanf(rx_bytes, "%llu", &bytes))
-		err(1, "failed to parse `/sys/class/net/enp4s0/statistics/rx_bytes`");
+	if (fscanf(rx_bytes, "%llu", &bytes) != 1)
+		errx(1, "failed to parse `%s`", path);
 
+	static unsigned long long old_bytes;
+	unsigned long long delta = bytes - old_bytes;
+	old_bytes = bytes;
 
+	return delta;
 }
-*/
+
+double get_enp4s0_tx() {
+	const char* path = "/sys/class/net/enp4s0/statistics/tx_bytes";
+	static FILE* tx_bytes;
+	open_or_die(path, &tx_bytes);
+
+	unsigned long long bytes;
+	if (fscanf(tx_bytes, "%llu", &bytes) != 1)
+		errx(1, "failed to parse `%s`", path);
+
+	static unsigned long long old_bytes;
+	unsigned long long delta = bytes - old_bytes;
+	old_bytes = bytes;
+
+	return delta;
+}
+
+
+struct Stats {
+	double cpu;
+	double ram;
+	double temp;
+	double fan1;
+	double fan2;
+	double fan3;
+	double net_rx;
+	double net_tx;
+	double drive_read;
+	double drive_write;
+};
+
+struct Stats get_stats() {
+	struct Stats stats = {
+		.cpu = get_cpu(),
+		.ram = get_ram(),
+		.temp = get_tccd1(),
+		.fan1 = get_fan1(),
+		.fan2 = get_fan2(),
+		.fan3 = get_fan3(),
+		/* TODO normalize 
+		.net_rx = get_enp4s0_rx(),
+		.net_tx = get_enp4s0_tx(),
+		*/
+	};
+	return stats;
+}
 
 int main() {
-	for (;;) {
-		printf("cpu: %f, temp: %f, ram: %f, fan1: %u, fan2: %u, fan3: %u\n", get_cpu(), get_tccd1(), get_ram(), get_fan1(), get_fan2(), get_fan3());
-		sleep_until(get_time() + 1);
-	}
-	return 1;
 	init_bitmaps();
 
 	struct Area area;
-	if (!alloc_area(&area, 128, 32))
-		errx(1, "failed to allocate area");
+	alloc_area(&area, 57, 32);
 
-	struct Area uptime_icon_area;
-	get_subarea(&area, &uptime_icon_area, 4, 2, 13, 11);
-	render_bitmap(&uptime_icon_area, &uptime_icon);
+	struct Area cpu_plot_area;
+	get_subarea(&area, &cpu_plot_area, 0, 0, 30, 10);
 
-	struct Area uptime_icon_text;
-	get_subarea(&area, &uptime_icon_text, 15, 16, 5, 14);
-	render_bitmap(&uptime_icon_text, &uptime_text);
+	struct Area tmp_plot_area;
+	get_subarea(&area, &tmp_plot_area, 0, 11, 30, 10);
 
-	struct Area fan_icon_area;
-	get_subarea(&area, &fan_icon_area, 113, 2, 11, 11);
-	render_bitmap(&fan_icon_area, &fan_icon);
+	struct Area ram_plot_area;
+	get_subarea(&area, &ram_plot_area, 0, 22, 30, 10);
 
-	struct Area rtt_icon_area;
-	get_subarea(&area, &rtt_icon_area, 24, 0, 9, 32);
-	render_bitmap(&rtt_icon_area, &rtt_icon);
+	struct Ring cpu_ring;
+	alloc_ring(&cpu_ring, 30);
+
+	struct Ring tmp_ring;
+	alloc_ring(&tmp_ring, 30);
+
+	struct Ring ram_ring;
+	alloc_ring(&ram_ring, 30);
 
 	/*
-	struct Ring ring;
-	if (!(alloc_ring(&ring, 20)))
-		errx(1, "failed to allocate ring");
-		*/
+	struct Ring net_tx_ring;
+	alloc_ring(&net_tx_ring, 30);
 
-	struct Area pl_area;
-	get_subarea(&area, &pl_area, 0, 6, 20, 10);
+	struct Ring net_rx_ring;
+	alloc_ring(&net_rx_ring, 30);
+	*/
+
 	
 	double next_update = get_time();
 	double x = 0;
 	for (;;) {
 		sleep_until(next_update);
-		next_update += 1.0 / 10;
+		next_update += 1.0 / 1;
 
-		struct Value rv = get_rand();
+		push_ring(&cpu_ring, get_cpu() * 10);
+		push_ring(&ram_ring, get_ram() * 10);
+		push_ring(&tmp_ring, get_tccd1() / 10);
+		//push_ring(&net_tx_ring, get_enp4s0_tx());
+		//push_ring(&net_rx_ring, get_enp4s0_rx());
 
-		//push_ring(&ring, sin(x += 0.4) * 5 + 5);
+		render_plot(&cpu_plot_area, &cpu_ring);
+		render_plot(&ram_plot_area, &ram_ring);
+		render_plot(&tmp_plot_area, &tmp_ring);
 
 		//render_scalar(&sv_area, (int)rv.value);
 		//render_plot(&pl_area, &ring);
 
-
 		draw_area(&area);
-		
 	}
 
-	/*
-	draw_area(&area);
-
-	fill_area(&area);
-	draw_area(&area);
-	
-	struct Area subarea;
-	get_subarea(&area, &subarea, 1, 1, 18, 3);
-	clear_area(&subarea);
-	draw_area(&area);
-	*/
-
-	//free_ring(&ring);
-	free_area(&area);
+	// no need to free memory, the program will either run forever or die horribly
 }
