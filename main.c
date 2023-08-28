@@ -341,7 +341,7 @@ void render_plot(
 		struct Area* area, 
 		const struct Ring* ring
 ) {
-	assert(ring->capacity <= area->width);
+	assert(ring->capacity == area->width);
 
 	clear_area(area);
 	for (size_t i = 0; i < ring->length; i++) {
@@ -506,6 +506,18 @@ double get_tccd1() {
 	return temp / 1000.0;
 }
 
+double get_jc42() {
+	const char* path = "/sys/class/hwmon/hwmon1/temp1_input";
+	static FILE* temp1_input;
+	open_or_die(path, &temp1_input);
+
+	unsigned long temp;
+	if (fscanf(temp1_input, "%lu", &temp) != 1)
+		errx(1, "failed to parse `%s`", path);
+
+	return temp / 1000.0;
+}
+
 double get_fan1() {
 	const char* path = "/sys/class/hwmon/hwmon2/fan1_input";
 	static FILE* fan1_input;
@@ -617,7 +629,8 @@ void get_drive(double* read, double* written) {
 struct Stats {
 	double cpu;
 	double ram;
-	double temp;
+	double cpu_tmp;
+	double ram_tmp;
 	double minutes;
 	double hours;
 	double days;
@@ -639,7 +652,8 @@ struct Stats get_stats() {
 	struct Stats stats = {
 		.cpu = get_cpu(),
 		.ram = get_ram(),
-		.temp = get_tccd1(),
+		.cpu_tmp = get_tccd1(),
+		.ram_tmp = get_jc42(),
 		.fan1 = get_fan1(),
 		.fan2 = get_fan2(),
 		.fan3 = get_fan3(),
@@ -726,6 +740,8 @@ void draw_display(const struct Area* area) {
 	//TODO add error handling
 }
 
+#define PLOT_WIDTH 38
+#define PLOT_HEIGHT 10
 
 int main() {
 	init_bitmaps();
@@ -738,90 +754,98 @@ int main() {
 
 
 	struct Area cpu_plot_area;
-	get_subarea(&area, &cpu_plot_area, 0, 0, 30, 10);
+	get_subarea(&area, &cpu_plot_area, 0, 0, PLOT_WIDTH, PLOT_HEIGHT);
 
-	struct Area temp_plot_area;
-	get_subarea(&area, &temp_plot_area, 0, 11, 30, 10);
+	struct Area cpu_tmp_plot_area;
+	get_subarea(&area, &cpu_tmp_plot_area, 0, 12, PLOT_WIDTH, PLOT_HEIGHT);
+
+	struct Area ram_tmp_plot_area;
+	get_subarea(&area, &ram_tmp_plot_area, 0, 42, PLOT_WIDTH, PLOT_HEIGHT);
 
 	struct Area ram_plot_area;
-	get_subarea(&area, &ram_plot_area, 0, 22, 30, 10);
-
-	struct Area net_rx_area;
-	get_subarea(&area, &net_rx_area, 61, 0, 30, 10);
+	get_subarea(&area, &ram_plot_area, 0, 54, PLOT_WIDTH, PLOT_HEIGHT);
 
 	struct Area net_tx_area;
-	get_subarea(&area, &net_tx_area, 61, 11, 30, 10);
+	get_subarea(&area, &net_tx_area, 90, 0, PLOT_WIDTH, PLOT_HEIGHT);
+
+	struct Area net_rx_area;
+	get_subarea(&area, &net_rx_area, 90, 12, PLOT_WIDTH, PLOT_HEIGHT);
 
 	struct Area drive_r_area;
-	get_subarea(&area, &drive_r_area, 61, 22, 30, 10);
+	get_subarea(&area, &drive_r_area, 90, 42, PLOT_WIDTH, PLOT_HEIGHT);
 
 	struct Area drive_w_area;
-	get_subarea(&area, &drive_w_area, 61, 33, 30, 10);
+	get_subarea(&area, &drive_w_area, 90, 54, PLOT_WIDTH, PLOT_HEIGHT);
 
 
 	struct Area cpu_scalar_area;
-	get_subarea(&area, &cpu_scalar_area, 41, 3, 11, 4);
+	get_subarea(&area, &cpu_scalar_area, 49, 6, 11, 4);
 
-	struct Area temp_scalar_area;
-	get_subarea(&area, &temp_scalar_area, 45, 14, 7, 4);
+	struct Area cpu_tmp_scalar_area;
+	get_subarea(&area, &cpu_tmp_scalar_area, 49, 12, 11, 4);
+
+	struct Area ram_tmp_scalar_area;
+	get_subarea(&area, &ram_tmp_scalar_area, 49, 48, 11, 4);
 
 	struct Area ram_scalar_area;
-	get_subarea(&area, &ram_scalar_area, 41, 25, 11, 4);
+	get_subarea(&area, &ram_scalar_area, 49, 54, 11, 4);
 
-	// TODO check order
 	struct Area net_tx_scalar_area;
-	get_subarea(&area, &net_tx_scalar_area, 95, 1, 33, 4);
+	get_subarea(&area, &net_tx_scalar_area, 53, 0, 33, 4);
 
 	struct Area net_rx_scalar_area;
-	get_subarea(&area, &net_rx_scalar_area, 95, 16, 33, 4);
+	get_subarea(&area, &net_rx_scalar_area, 53, 18, 33, 4);
 
 	struct Area drive_r_scalar_area;
-	get_subarea(&area, &drive_r_scalar_area, 95, 23, 33, 4);
+	get_subarea(&area, &drive_r_scalar_area, 53, 42, 33, 4);
 
 	struct Area drive_w_scalar_area;
-	get_subarea(&area, &drive_w_scalar_area, 95, 38, 33, 4);
+	get_subarea(&area, &drive_w_scalar_area, 53, 60, 33, 4);
 
 
 	struct Area uptime_days_area;
-	get_subarea(&area, &uptime_days_area, 0, 50, 11, 4);
+	get_subarea(&area, &uptime_days_area, 100, 25, 11, 4);
 
 	struct Area uptime_hours_area;
-	get_subarea(&area, &uptime_hours_area, 4, 55, 7, 4);
+	get_subarea(&area, &uptime_hours_area, 104, 30, 7, 4);
 
 	struct Area uptime_minutes_area;
-	get_subarea(&area, &uptime_minutes_area, 4, 60, 7, 4);
+	get_subarea(&area, &uptime_minutes_area, 104, 35, 7, 4);
 
 
 	struct Area fan1_area;
-	get_subarea(&area, &fan1_area, 19, 50, 15, 4);
+	get_subarea(&area, &fan1_area, 0, 25, 15, 4);
 
 	struct Area fan2_area;
-	get_subarea(&area, &fan2_area, 19, 55, 15, 4);
+	get_subarea(&area, &fan2_area, 0, 30, 15, 4);
 
 	struct Area fan3_area;
-	get_subarea(&area, &fan3_area, 19, 60, 15, 4);
+	get_subarea(&area, &fan3_area, 0, 35, 15, 4);
 
 
 	struct Ring cpu_ring;
-	alloc_ring(&cpu_ring, 30);
+	alloc_ring(&cpu_ring, PLOT_WIDTH);
 
-	struct Ring tmp_ring;
-	alloc_ring(&tmp_ring, 30);
+	struct Ring cpu_tmp_ring;
+	alloc_ring(&cpu_tmp_ring, PLOT_WIDTH);
+
+	struct Ring ram_tmp_ring;
+	alloc_ring(&ram_tmp_ring, PLOT_WIDTH);
 
 	struct Ring ram_ring;
-	alloc_ring(&ram_ring, 30);
+	alloc_ring(&ram_ring, PLOT_WIDTH);
 
 	struct Ring net_rx_ring;
-	alloc_ring(&net_rx_ring, 30);
+	alloc_ring(&net_rx_ring, PLOT_WIDTH);
 
 	struct Ring net_tx_ring;
-	alloc_ring(&net_tx_ring, 30);
+	alloc_ring(&net_tx_ring, PLOT_WIDTH);
 
 	struct Ring drive_r_ring;
-	alloc_ring(&drive_r_ring, 30);
+	alloc_ring(&drive_r_ring, PLOT_WIDTH);
 
 	struct Ring drive_w_ring;
-	alloc_ring(&drive_w_ring, 30);
+	alloc_ring(&drive_w_ring, PLOT_WIDTH);
 	
 	double next_update = get_time();
 	double x = 0;
@@ -831,8 +855,10 @@ int main() {
 
 		struct Stats stats = get_stats();
 
+		// TODO rounding ??
 		push_ring(&cpu_ring, stats.cpu * 10);
-		push_ring(&tmp_ring, stats.temp / 10);
+		push_ring(&cpu_tmp_ring, stats.cpu_tmp / 10);
+		push_ring(&ram_tmp_ring, stats.ram_tmp / 10);
 		push_ring(&ram_ring, stats.ram * 10);
 		push_ring(&net_rx_ring, stats.net_rx);
 		push_ring(&net_tx_ring, stats.net_tx);
@@ -840,7 +866,8 @@ int main() {
 		push_ring(&drive_w_ring, stats.drive_w);
 
 		render_scalar(&cpu_scalar_area, stats.cpu * 100);
-		render_scalar(&temp_scalar_area, stats.temp);
+		render_scalar(&cpu_tmp_scalar_area, stats.cpu_tmp);
+		render_scalar(&ram_tmp_scalar_area, stats.ram_tmp);
 		render_scalar(&ram_scalar_area, stats.ram * 100);
 
 		render_scalar_prefixed(&net_rx_scalar_area, stats.net_rx);
@@ -857,8 +884,9 @@ int main() {
 		render_scalar(&fan3_area, stats.fan3);
 
 		render_plot(&cpu_plot_area, &cpu_ring);
+		render_plot(&cpu_tmp_plot_area, &cpu_tmp_ring);
+		render_plot(&ram_tmp_plot_area, &ram_tmp_ring);
 		render_plot(&ram_plot_area, &ram_ring);
-		render_plot(&temp_plot_area, &tmp_ring);
 		render_plot_normalized(&net_rx_area, &net_rx_ring);
 		render_plot_normalized(&net_tx_area, &net_tx_ring);
 		render_plot_normalized(&drive_r_area, &drive_r_ring);
