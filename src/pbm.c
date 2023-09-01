@@ -102,6 +102,7 @@ bool parse_pbm_header(char* file, size_t* file_size, size_t* width, size_t* heig
 }
 
 // NOTE leaks memory on fault by design
+// if it fails the program dies immediately
  const bool** parse_pbm_data(const char* file, size_t width, size_t height) {
 	bool** buffer = calloc(height, sizeof(bool*));
 	if (!buffer)
@@ -128,19 +129,13 @@ bool parse_pbm_header(char* file, size_t* file_size, size_t* width, size_t* heig
 	return (const bool**)buffer;
 }
 
-struct Bitmap load_pbm(const char* path, size_t exp_width, size_t exp_height) {
+struct Bitmap load_pbm(const char* path) {
 	size_t file_size;
 	char* file = load_text(path, &file_size);
 
 	size_t width, height;
 	if (!parse_pbm_header(file, &file_size, &width, &height))
 		errx(1, "failed to parse header od `%s`", path);
-
-	if (width != exp_width)
-		errx(1, " width of image `%s` is %zu, while expecting %zu", path, width, exp_width);
-
-	if (height != exp_height)
-		errx(1, "height of image `%s` is %zu, while expecting %zu", path, height, exp_height);
 
 	const bool** buffer = parse_pbm_data(file, width, height);
 	if (!buffer)
@@ -152,5 +147,25 @@ struct Bitmap load_pbm(const char* path, size_t exp_width, size_t exp_height) {
 		.height = height,
 		.width = width
 	};
+}
+
+struct Bitmap load_exp_pbm(const char* path, size_t exp_width, size_t exp_height) {
+	struct Bitmap bitmap = load_pbm(path);
+
+	if (bitmap.width != exp_width)
+		errx(1, " width of image `%s` is %zu, while expecting %zu", path, bitmap.width, exp_width);
+
+	if (bitmap.height != exp_height)
+		errx(1, "height of image `%s` is %zu, while expecting %zu", path, bitmap.height, exp_height);
+	return bitmap;
+}
+
+void free_pbm(struct Bitmap* bitmap) {
+	for (size_t y = 0; y < bitmap->height; y++)
+		free((void*)bitmap->buff[y]);
+	free(bitmap->buff);
+	bitmap->buff = NULL;
+	bitmap->width=0;
+	bitmap->height=0;
 }
 

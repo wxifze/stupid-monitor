@@ -5,15 +5,14 @@
 #include "timing.h"
 #include "stats.h"
 
-
 #define PLOT_WIDTH 38
 #define PLOT_HEIGHT 10
-#define UPDATES_PER_S 1.0
+#define UPD_PER_SEC 1.0
 
 int main() {
 	init_render("bitmaps");
 	int display = init_display("/dev/ttyUSB0", 666666);
-	struct Bitmap template = load_pbm("bitmaps/template.pbm", 128, 64);
+	struct Bitmap template = load_exp_pbm("bitmaps/template.pbm", 128, 64);
 
 
 	struct Area area;
@@ -115,13 +114,13 @@ int main() {
 	alloc_ring(&disk_w_ring, PLOT_WIDTH);
 
 	
-	double next_update = get_time() + 1.0 / UPDATES_PER_S;
+	double next_update = get_time() + 1.0 / UPD_PER_SEC;
 	get_stats(); // removes first run garbage
 
 	for (;;) {
 		if (!sleep_until(next_update))
 			errx(1, "failed to render frame in time");
-		next_update += 1.0 / UPDATES_PER_S;
+		next_update += 1.0 / UPD_PER_SEC;
 
 		struct Stats stats = get_stats();
 
@@ -163,7 +162,4 @@ int main() {
 
 		draw_display(display, &area);
 	}
-
-	// no need to free memory or close files
-	// the program will either run forever or die horribly
 }

@@ -10,8 +10,10 @@ struct Bitmap {
 	size_t height;
 };
 
-struct Bitmap load_pbm(const char* path, size_t exp_width, size_t exp_height);
+struct Bitmap load_pbm(const char* path);
 
-// since the program will never stop and free it's resources, there is no free_pbm()
+struct Bitmap load_exp_pbm(const char* path, size_t exp_width, size_t exp_height);
+
+void free_pbm(struct Bitmap* bitmap);
 
 #endif

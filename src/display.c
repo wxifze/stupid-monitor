@@ -8,6 +8,7 @@
 #include "display.h"
 #include "timing.h"
 
+int tcflush(int fd, int queue_selector);
 
 int init_display(const char* path, speed_t baud) {
 	int display = open(path, O_RDWR);
@@ -54,6 +55,10 @@ int init_display(const char* path, speed_t baud) {
 
 	// arduino bootloader waits for 1.6 seconds before executing code
 	sleep_until(get_time() + 2);
+
+	// TCSETSF2 doesn't work
+	if (tcflush(display, TCIOFLUSH))
+		err(1, "failed to tcflush `%s`", path);
 
 	return display;
 }

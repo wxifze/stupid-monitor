@@ -17,10 +17,10 @@ run_debug: debug
 MONSRC = src/area.c src/display.c src/display.h src/pbm.c src/render.c src/ring.c src/stats.c src/timing.c 
 MONDEPS = $(MONSRC) src/area.h src/display.h src/pbm.h src/render.h src/ring.h src/stats.h src/timing.h
 
-monitor: $(MONDEPS)
+monitor: $(MONDEPS) src/main.c
 	$(CC) $(CFLAGS) $(MONSRC) src/main.c -o monitor
 
-monitor_debug: $(MONDEPS)
+monitor_debug: $(MONDEPS) src/main.c
 	$(CC) $(CFLAGS) $(MONSRC) src/main.c -o monitor_debug
 
 clean:

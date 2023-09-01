@@ -176,7 +176,7 @@ struct Bitmap init_bitmap(const char* path, const char* name, size_t width, size
 	full_path[path_len] = '/';
 	memcpy(full_path + path_len + 1, name, name_len + 1);
 
-	return load_pbm(full_path, width, height);
+	return load_exp_pbm(full_path, width, height);
 }
 
 // path must point to a folder with:
