@@ -10,9 +10,9 @@
 #define UPD_PER_SEC 1.0
 
 int main() {
-	init_render("bitmaps");
+	init_render("../bitmaps");
 	int display = init_display("/dev/ttyUSB0", 666666);
-	struct Bitmap template = load_exp_pbm("bitmaps/template.pbm", 128, 64);
+	struct Bitmap template = load_exp_pbm("../bitmaps/template.pbm", 128, 64);
 
 
 	struct Area area;
@@ -70,23 +70,23 @@ int main() {
 
 
 	struct Area uptime_days_area;
-	subarea(&area, &uptime_days_area, 100, 25, 11, 4);
+	subarea(&area, &uptime_days_area, 94, 25, 11, 4);
 
 	struct Area uptime_hours_area;
-	subarea(&area, &uptime_hours_area, 104, 30, 7, 4);
+	subarea(&area, &uptime_hours_area, 98, 30, 7, 4);
 
 	struct Area uptime_minutes_area;
-	subarea(&area, &uptime_minutes_area, 104, 35, 7, 4);
+	subarea(&area, &uptime_minutes_area, 98, 35, 7, 4);
 
 
 	struct Area fan1_area;
-	subarea(&area, &fan1_area, 0, 25, 15, 4);
+	subarea(&area, &fan1_area, 18, 25, 15, 4);
 
 	struct Area fan2_area;
-	subarea(&area, &fan2_area, 0, 30, 15, 4);
+	subarea(&area, &fan2_area, 18, 30, 15, 4);
 
 	struct Area fan3_area;
-	subarea(&area, &fan3_area, 0, 35, 15, 4);
+	subarea(&area, &fan3_area, 18, 35, 15, 4);
 
 
 	struct Ring cpu_ring;

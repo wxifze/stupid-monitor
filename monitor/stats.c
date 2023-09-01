@@ -4,6 +4,9 @@
 
 #include "timing.h"
 
+// hwmon names aren't persistent
+// most of this should probably be reimplemented with libsensors
+
 void open_or_die(const char* path, FILE** file) {
 	if (!*file) {
 		 *file = fopen(path, "r");

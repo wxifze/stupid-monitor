@@ -49,6 +49,7 @@ void render_scalar(struct Area* area, unsigned int value) {
 // value souldn't be greater or equal to 1024^4
 void render_scalar_prefixed(struct Area* area, unsigned long long value) {
 	assert(area->width == 33);
+	assert(area->height == 4);
 
 	clear_area(area);
 	ssize_t p = 0;
