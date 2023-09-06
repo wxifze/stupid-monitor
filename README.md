@@ -1,5 +1,5 @@
 # stupid-monitor
-Stupid-like-a-fox system monitor. It reads data from different APIs. It draws it on the screen. That's it. 
+Stupid-like-a-fox system monitor. It reads data from different APIs. It draws the data on the screen. That's it. 
 
 <p align="center">
   <img src="https://github.com/wxifze/stupid-monitor/assets/95285485/43eb0535-87a8-45f1-84cb-58437577e9a6" width=500>
